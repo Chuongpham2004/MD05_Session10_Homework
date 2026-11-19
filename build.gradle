@@ -6,7 +6,7 @@ plugins {
 
 group = 'org.example'
 version = '0.0.1-SNAPSHOT'
-description = 'MD05_Session10_Homework'
+description = 'QuickBite - Order Service'
 
 java {
     toolchain {
@@ -19,9 +19,20 @@ repositories {
 }
 
 dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter'
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    runtimeOnly 'org.postgresql:postgresql'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// Chỉ tạo 1 file fat jar (app.jar) để Dockerfile copy
+tasks.named('jar') {
+    enabled = false
+}
+tasks.named('bootJar') {
+    archiveFileName = 'app.jar'
 }
 
 tasks.named('test') {

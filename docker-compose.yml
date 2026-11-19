@@ -1,0 +1,48 @@
+# docker-compose.yml (bản ĐÃ SỬA)
+# - Bỏ "version": Docker Compose v2 trở lên không dùng nữa (chỉ gây cảnh báo "obsolete")
+
+services:
+  order-service:
+    build: .
+    image: quickbite/order-service:latest
+    container_name: order-service
+    ports:
+      - "8080:8080"
+    environment:
+      # [SỬA 1] localhost -> order-db (tên service của database).
+      # Docker Compose tạo network chung cho các service, DNS nội bộ của Docker
+      # phân giải tên service "order-db" thành IP của container database.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://order-db:5432/quickbite_db
+      SPRING_DATASOURCE_USERNAME: quickbite
+      SPRING_DATASOURCE_PASSWORD: quickbite_pass
+    # [SỬA 2] Khởi động order-db trước order-service.
+    # Dùng "condition: service_healthy" để đợi Postgres SẴN SÀNG nhận kết nối
+    # (depends_on dạng ngắn chỉ đợi container được start, Postgres có thể chưa sẵn sàng).
+    depends_on:
+      order-db:
+        condition: service_healthy
+    restart: on-failure
+
+  order-db:
+    image: postgres:15
+    container_name: order-db
+    environment:
+      POSTGRES_DB: quickbite_db
+      POSTGRES_USER: quickbite
+      POSTGRES_PASSWORD: quickbite_pass
+    # [SỬA 3] Thêm healthcheck để depends_on biết khi nào database sẵn sàng.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quickbite -d quickbite_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # [SỬA 4] Chỉ mở 5432 trên localhost của VPS. Docker bỏ qua UFW (xem Bài tập 4),
+    # nên "5432:5432" sẽ đưa database ra Internet. order-service vẫn kết nối
+    # qua network nội bộ của Compose, không cần cổng này.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - order_db_data:/var/lib/postgresql/data
+
+volumes:
+  order_db_data:
