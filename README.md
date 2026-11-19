@@ -95,3 +95,32 @@ Xem file [`docs/bt3-commands.txt`](docs/bt3-commands.txt), gồm các bước:
 - `root` đăng nhập: **bị từ chối** (`Permission denied (publickey)`).
 
 ![Đăng nhập root bị từ chối](docs/images/bt3-root-denied.png)
+
+---
+
+## Bài tập 4: Cấu hình Firewall UFW
+
+### 1. Các lệnh đã thực thi
+
+Xem file [`docs/bt4-commands.txt`](docs/bt4-commands.txt), gồm:
+
+1. Mở `22/tcp` trước, đặt `default deny incoming` / `default allow outgoing`.
+2. Mở `8080/tcp` (và `80/tcp`, `443/tcp` để chuẩn bị cho web server), rồi `ufw enable`.
+3. Chạy 2 container Nginx ở cổng `8080` và `8081`.
+4. Truy cập từ bên ngoài để so sánh.
+
+> **Lưu ý: Docker bỏ qua UFW.** Khi publish port bằng `docker run -p 8081:80`, Docker tự thêm rule iptables và NAT traffic vào container trước khi gói tin tới các rule của UFW, nên cổng 8081 vẫn truy cập được dù UFW không mở. Vì vậy bài này chạy Nginx với `--network host`, để traffic đi qua chain `INPUT` và bị UFW lọc đúng như mong đợi.
+
+> **Lưu ý: tường lửa Cloud.** Ngoài UFW trên VPS, WiServices còn một lớp tường lửa ở tầng Cloud (tab Networking). Gói tin phải qua cả 2 lớp, nên cần thêm rule `IN / ACCEPT / TCP / Đích cổng 8080` trên giao diện Cloud thì cổng 8080 mới truy cập được từ bên ngoài. Cổng 8081 không được mở ở lớp nào.
+
+### 2. Trạng thái UFW
+
+![sudo ufw status verbose](docs/images/bt4-ufw-status.png)
+
+### 3. Truy cập cổng 8080 thành công
+
+![Truy cập 8080 thành công](docs/images/bt4-port-8080.png)
+
+### 4. Truy cập cổng 8081 thất bại
+
+![Truy cập 8081 thất bại](docs/images/bt4-port-8081.png)

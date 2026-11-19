@@ -1,0 +1,105 @@
+############################################################
+# Bài tập 4: Cấu hình Firewall UFW
+# VPS: devops-rikkei-chuong (221.121.2.29) - Ubuntu 22.04.5 LTS
+# Thực hiện bằng user deployer (có sudo)
+############################################################
+
+# ========== 1. Cấu hình UFW ==========
+
+# Mở SSH TRƯỚC khi bật UFW để không tự khoá mình ngoài VPS
+sudo ufw allow 22/tcp
+
+# Chính sách mặc định: chặn mọi kết nối đến, cho phép mọi kết nối đi
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+
+# Mở cổng ứng dụng 8080/tcp
+sudo ufw allow 8080/tcp
+
+# (Đã mở thêm 80/tcp và 443/tcp để chuẩn bị cho web server HTTP/HTTPS sau này)
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+
+# Bật UFW
+sudo ufw enable
+
+# Kiểm tra
+sudo ufw status verbose
+#   Status: active
+#   Default: deny (incoming), allow (outgoing), deny (routed)
+#   To                         Action      From
+#   --                         ------      ----
+#   22/tcp                     ALLOW IN    Anywhere
+#   80/tcp                     ALLOW IN    Anywhere
+#   443/tcp                    ALLOW IN    Anywhere
+#   8080/tcp                   ALLOW IN    Anywhere
+#   (+ các dòng tương ứng cho IPv6)
+#   -> KHÔNG có 8081 => cổng 8081 bị chặn bởi "deny (incoming)"
+
+
+# ========== 2. Chạy 2 container Nginx ở cổng 8080 và 8081 ==========
+
+# Đảm bảo Docker daemon đang chạy
+sudo systemctl enable --now docker
+
+# LƯU Ý QUAN TRỌNG: Docker BỎ QUA UFW khi publish port bằng "-p".
+#   Docker tự thêm rule iptables (chain DOCKER, đi qua FORWARD) và NAT
+#   traffic tới container TRƯỚC khi gói tin tới các rule INPUT của UFW.
+#   => "docker run -p 8081:80 nginx" vẫn truy cập được từ ngoài dù UFW không mở 8081.
+#
+# Để UFW thực sự kiểm soát cổng, chạy Nginx bằng "--network host":
+#   container dùng trực tiếp network của VPS, traffic đi qua chain INPUT
+#   nên bị UFW lọc như một tiến trình bình thường trên máy.
+
+# Tạo file cấu hình Nginx cho từng cổng
+mkdir -p ~/ufw-lab
+for p in 8080 8081; do
+cat > ~/ufw-lab/nginx-$p.conf <<EOF
+server {
+    listen $p;
+    root /usr/share/nginx/html;
+    index index.html;
+}
+EOF
+done
+
+# Chạy 2 container Nginx
+docker run -d --name nginx-8080 --network host \
+  -v ~/ufw-lab/nginx-8080.conf:/etc/nginx/conf.d/default.conf:ro nginx
+docker run -d --name nginx-8081 --network host \
+  -v ~/ufw-lab/nginx-8081.conf:/etc/nginx/conf.d/default.conf:ro nginx
+
+docker ps
+ss -tlnp | grep -E ':(8080|8081)'
+
+# Trên chính VPS: cả 2 cổng đều phản hồi (Nginx chạy bình thường ở cả 2)
+curl -I http://localhost:8080          # HTTP/1.1 200 OK
+curl -I http://localhost:8081          # HTTP/1.1 200 OK
+
+
+# ========== 2b. Mở cổng 8080 trên tường lửa Cloud (WiServices) ==========
+# Ngoài UFW, nhà cung cấp còn một lớp tường lửa ở tầng Cloud chặn mọi cổng
+# (trừ 22). Trên giao diện: Máy ảo -> devops-rikkei-chuong -> Networking
+#   -> Thêm Quy Tắc Tường Lửa:
+#      Hướng: Đầu Vào (IN) | Hành động: ACCEPT | Giao thức: TCP
+#      Nguồn: IP All, Cổng All | Đích: IP All, Cổng 8080
+# (Không thêm rule cho 8081)
+
+
+# ========== 3. Kiểm tra từ máy cá nhân (bên ngoài) ==========
+
+# Trình duyệt:
+#   http://221.121.2.29:8080  -> hiển thị "Welcome to nginx!"   (THÀNH CÔNG)
+#   http://221.121.2.29:8081  -> không tải được / timeout        (THẤT BẠI)
+
+# Hoặc PowerShell:
+curl.exe -I -m 5 http://221.121.2.29:8080   # HTTP/1.1 200 OK
+curl.exe -I -m 5 http://221.121.2.29:8081   # curl: (28) Connection timed out
+Test-NetConnection 221.121.2.29 -Port 8080  # TcpTestSucceeded : True
+Test-NetConnection 221.121.2.29 -Port 8081  # TcpTestSucceeded : False
+
+# => Nginx chạy ở cả 2 cổng, nhưng chỉ 8080 được UFW cho phép từ bên ngoài.
+
+
+# ========== 4. Dọn dẹp (sau khi chụp ảnh) ==========
+docker rm -f nginx-8080 nginx-8081
