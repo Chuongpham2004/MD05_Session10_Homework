@@ -1,0 +1,70 @@
+############################################################
+# Bài tập 2: Tạo User Deploy và Cài đặt Docker
+# VPS: devops-rikkei-chuong (221.121.2.29) - Ubuntu 22.04.5 LTS
+#
+# Ghi chú: user deploy được đặt tên là "deployer" (tạo từ Bài tập 1),
+# đóng vai trò user "deploy" theo yêu cầu đề bài.
+############################################################
+
+# ---------- 1. Truy cập VPS bằng quyền root ----------
+ssh root@221.121.2.29
+
+# ---------- 2. Tạo user deploy và cấp quyền sudo ----------
+adduser deployer                  # tạo user, đặt mật khẩu
+usermod -aG sudo deployer         # thêm vào group sudo
+groups deployer                   # kiểm tra: deployer : deployer sudo
+
+# Cấu hình SSH key cho user deployer (đăng nhập bằng key thay vì password)
+mkdir -p /home/deployer/.ssh
+cp ~/.ssh/authorized_keys /home/deployer/.ssh/authorized_keys
+chown -R deployer:deployer /home/deployer/.ssh
+chmod 700 /home/deployer/.ssh
+chmod 600 /home/deployer/.ssh/authorized_keys
+
+# ---------- 3. Cài đặt Docker Engine + Docker Compose plugin ----------
+# (theo hướng dẫn chính thức: https://docs.docker.com/engine/install/ubuntu/)
+
+# Gỡ các gói cũ/không chính thức nếu có
+for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
+  apt-get remove -y $pkg
+done
+
+# Thêm GPG key và repository chính thức của Docker
+apt-get update
+apt-get install -y ca-certificates curl
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+apt-get update
+
+# Cài Docker Engine, CLI, containerd, Buildx và Compose plugin
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Bật Docker khởi động cùng hệ thống
+systemctl enable --now docker
+systemctl status docker --no-pager
+
+# ---------- 4. Thêm user deploy vào group docker ----------
+usermod -aG docker deployer
+groups deployer                   # kiểm tra: deployer : deployer sudo docker
+
+# ---------- 5. Kiểm tra dưới quyền user deployer ----------
+exit                              # thoát phiên root
+ssh deployer@221.121.2.29         # đăng nhập lại bằng SSH key để nhận group mới
+
+id
+# uid=1000(deployer) gid=1000(deployer) groups=1000(deployer),27(sudo),113(docker)
+
+docker --version
+# Docker version 29.10.0, build fdd4b8e
+
+docker compose version
+# Docker Compose version v5.8.0
+
+docker run --rm hello-world       # chạy container thử, không cần sudo

@@ -41,3 +41,30 @@ Kết quả đăng nhập thành công (prompt `deployer@devops-rikkei-chuong:~$
   PasswordAuthentication no
   PermitRootLogin no
   ```
+
+---
+
+## Bài tập 2: Tạo User Deploy và Cài đặt Docker
+
+> User deploy được đặt tên là **`deployer`** (đã tạo từ Bài tập 1), đóng vai trò user `deploy` theo yêu cầu đề bài.
+
+### 1. Danh sách lệnh đã thực thi
+
+Xem file [`docs/bt2-commands.txt`](docs/bt2-commands.txt), gồm các bước:
+
+1. Truy cập VPS bằng `root`.
+2. Tạo user `deployer`, cấp quyền `sudo`, cấu hình SSH key.
+3. Cài Docker Engine + Docker Compose plugin từ repository chính thức của Docker.
+4. Thêm `deployer` vào group `docker` (chạy docker không cần `sudo`).
+
+### 2. Kết quả
+
+| Kiểm tra          | Kết quả                                                     |
+|-------------------|-------------------------------------------------------------|
+| `id`              | `groups=1000(deployer),27(sudo),113(docker)`                |
+| `docker --version`| `Docker version 29.10.0, build fdd4b8e`                     |
+| `docker compose version` | `Docker Compose version v5.8.0`                      |
+
+Ảnh chụp Terminal chạy `docker --version` dưới quyền user `deployer`:
+
+![docker --version dưới user deployer](docs/images/bt2-docker-version.png)
