@@ -1,0 +1,77 @@
+############################################################
+# Bài tập 3: Tăng cường bảo mật SSH
+# VPS: devops-rikkei-chuong (221.121.2.29) - Ubuntu 22.04.5 LTS
+# User deploy: deployer
+############################################################
+
+# ========== A. TRÊN MÁY CÁ NHÂN (Windows PowerShell) ==========
+
+# 1. Tạo cặp khóa SSH ed25519 (Private: id_ed25519, Public: id_ed25519.pub)
+ssh-keygen -t ed25519 -C "<email-cua-ban>"
+#   -> Enter để lưu mặc định tại C:\Users\<user>\.ssh\id_ed25519
+#   -> (tuỳ chọn) đặt passphrase để bảo vệ private key
+
+# 2. Xem nội dung public key để copy
+cat ~/.ssh/id_ed25519.pub
+#   ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... <email-cua-ban>
+
+# (Private key id_ed25519 KHÔNG BAO GIỜ được chia sẻ / đưa lên server)
+
+
+# ========== B. TRÊN VPS ==========
+
+# 3. Copy public key vào ~/.ssh/authorized_keys của user deployer
+#    (đăng nhập VPS, dán nội dung public key đã copy ở bước 2)
+ssh root@221.121.2.29
+mkdir -p /home/deployer/.ssh
+nano /home/deployer/.ssh/authorized_keys        # dán public key, lưu lại
+chown -R deployer:deployer /home/deployer/.ssh
+chmod 700 /home/deployer/.ssh
+chmod 600 /home/deployer/.ssh/authorized_keys
+
+# 4. Kiểm tra đăng nhập bằng key (mở cửa sổ MỚI, giữ phiên root đang mở
+#    để tránh bị khoá ngoài nếu cấu hình sai)
+ssh deployer@221.121.2.29                       # vào được, không hỏi mật khẩu
+sudo -v                                         # xác nhận deployer có sudo
+
+# 5. Sao lưu và chỉnh cấu hình SSH server
+sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+sudo nano /etc/ssh/sshd_config
+#   PermitRootLogin no
+#   PubkeyAuthentication yes
+#   PasswordAuthentication no
+#   KbdInteractiveAuthentication no
+
+# Lưu ý: Ubuntu đọc /etc/ssh/sshd_config.d/*.conf TRƯỚC sshd_config, và
+# với mỗi tuỳ chọn, giá trị xuất hiện ĐẦU TIÊN sẽ được dùng.
+# File 50-cloud-init.conf do cloud-init tạo có thể chứa
+# "PasswordAuthentication yes" -> ghi đè cấu hình ở trên, phải sửa luôn:
+sudo cat /etc/ssh/sshd_config.d/*.conf
+sudo sed -i 's/^\s*PasswordAuthentication\s\+yes/PasswordAuthentication no/' \
+  /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf
+
+# 6. Kiểm tra cú pháp và giá trị thực tế sshd sẽ dùng
+sudo sshd -t                                    # không in gì = cú pháp OK
+sudo sshd -T | grep -iE '^(permitrootlogin|passwordauthentication|pubkeyauthentication|kbdinteractiveauthentication) '
+#   permitrootlogin no
+#   pubkeyauthentication yes
+#   passwordauthentication no
+#   kbdinteractiveauthentication no
+
+# 7. Khởi động lại dịch vụ SSH
+sudo systemctl restart ssh
+sudo systemctl status ssh --no-pager
+
+
+# ========== C. KIỂM TRA LẠI TỪ MÁY CÁ NHÂN ==========
+
+# 8. User deployer đăng nhập bằng key -> THÀNH CÔNG
+ssh deployer@221.121.2.29
+
+# 9. User root -> BỊ TỪ CHỐI
+ssh root@221.121.2.29
+#   root@221.121.2.29: Permission denied (publickey).
+
+# 10. Ép dùng mật khẩu -> BỊ TỪ CHỐI (server không còn chấp nhận password)
+ssh -o PubkeyAuthentication=no deployer@221.121.2.29
+#   deployer@221.121.2.29: Permission denied (publickey).

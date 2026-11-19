@@ -68,3 +68,30 @@ Xem file [`docs/bt2-commands.txt`](docs/bt2-commands.txt), gồm các bước:
 Ảnh chụp Terminal chạy `docker --version` dưới quyền user `deployer`:
 
 ![docker --version dưới user deployer](docs/images/bt2-docker-version.png)
+
+---
+
+## Bài tập 3: Tăng cường bảo mật SSH
+
+### 1. Các lệnh tạo và cấu hình SSH Key
+
+Xem file [`docs/bt3-commands.txt`](docs/bt3-commands.txt), gồm các bước:
+
+1. Tạo cặp khóa `ed25519` trên máy cá nhân bằng `ssh-keygen`.
+2. Copy public key (`cat ~/.ssh/id_ed25519.pub`) vào `/home/deployer/.ssh/authorized_keys` trên VPS.
+3. Cấu hình `/etc/ssh/sshd_config`:
+   ```
+   PermitRootLogin no
+   PubkeyAuthentication yes
+   PasswordAuthentication no
+   KbdInteractiveAuthentication no
+   ```
+   Đồng thời sửa `/etc/ssh/sshd_config.d/50-cloud-init.conf` (được đọc trước và có thể ghi đè `PasswordAuthentication yes`).
+4. Kiểm tra bằng `sshd -t` / `sshd -T`, rồi `systemctl restart ssh`.
+
+### 2. Kết quả
+
+- `deployer` đăng nhập bằng SSH key: **thành công**.
+- `root` đăng nhập: **bị từ chối** (`Permission denied (publickey)`).
+
+![Đăng nhập root bị từ chối](docs/images/bt3-root-denied.png)
