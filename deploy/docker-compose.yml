@@ -1,0 +1,75 @@
+# =============================================================
+# Bài tập 6 - QuickBite Backend (môi trường UAT)
+# Triển khai hoàn toàn từ image trên Docker Hub - VPS không cần source code.
+#
+#   Internet --:80--> gateway (Nginx) --> order-service (Spring Boot) --> order-db (PostgreSQL)
+#
+# Chạy:  cp .env.example .env  (sửa mật khẩu)
+#        docker compose pull && docker compose up -d
+# =============================================================
+
+name: quickbite-uat
+
+services:
+  # ---------- 1. API Gateway (Nginx) ----------
+  gateway:
+    image: chuongdocker2004/quickbite-gateway:${GATEWAY_TAG:-1.0.0}
+    container_name: quickbite-gateway
+    ports:
+      - "80:80"                         # cổng DUY NHẤT mở ra Internet
+    depends_on:
+      order-service:
+        condition: service_healthy
+    networks:
+      - frontend
+    restart: unless-stopped
+
+  # ---------- 2. Spring Boot Backend ----------
+  order-service:
+    image: chuongdocker2004/quickbite-order-service:${ORDER_SERVICE_TAG:-1.0.0}
+    container_name: quickbite-order-service
+    # Không publish port: chỉ gateway truy cập được qua network "frontend"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://order-db:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      order-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+  # ---------- 3. Database PostgreSQL ----------
+  order-db:
+    image: postgres:15
+    container_name: quickbite-order-db
+    # Không publish port: chỉ order-service truy cập được qua network "backend"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - order_db_data:/var/lib/postgresql/data
+    networks:
+      - backend
+    restart: unless-stopped
+
+networks:
+  frontend:   # gateway <-> order-service
+  backend:    # order-service <-> order-db (gateway KHÔNG thấy database)
+
+volumes:
+  order_db_data:

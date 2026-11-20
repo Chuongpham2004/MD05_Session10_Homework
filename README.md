@@ -275,3 +275,156 @@ $ curl -s localhost:8080/api/orders
 ```
 
 → `order-service` đọc/ghi database PostgreSQL thành công.
+
+---
+
+## Bài tập 6: Triển khai toàn diện Hệ thống Backend lên VPS (UAT)
+
+### 1. Thành phần hệ thống
+
+| Service | Image (Docker Hub) | Vai trò | Cổng |
+|---|---|---|---|
+| `gateway` | [`chuongdocker2004/quickbite-gateway:1.0.0`](https://hub.docker.com/r/chuongdocker2004/quickbite-gateway) | API Gateway (Nginx): điểm vào duy nhất, định tuyến, rate limit, chặn endpoint nội bộ | **80** (public) |
+| `order-service` | [`chuongdocker2004/quickbite-order-service:1.0.0`](https://hub.docker.com/r/chuongdocker2004/quickbite-order-service) | Spring Boot Backend: REST API đặt món | 8080 (chỉ nội bộ) |
+| `order-db` | `postgres:15` | Database PostgreSQL, dữ liệu lưu trên volume `order_db_data` | 5432 (chỉ nội bộ) |
+
+| File | Nội dung |
+|---|---|
+| [`deploy/docker-compose.yml`](deploy/docker-compose.yml) | **File compose hoàn chỉnh** dùng trên VPS |
+| [`deploy/.env.example`](deploy/.env.example) | Mẫu biến môi trường (tag image, thông tin DB) |
+| [`gateway/nginx.conf`](gateway/nginx.conf), [`gateway/Dockerfile`](gateway/Dockerfile) | Source image Gateway |
+| [`Dockerfile`](Dockerfile) + `src/` | Source image Backend |
+
+### 2. Luồng hoạt động
+
+```mermaid
+flowchart LR
+    C[Client / Browser] -- "HTTP :80" --> CF[Tường lửa Cloud<br/>WiServices]
+    CF --> UFW[UFW trên VPS<br/>allow 80/tcp]
+    UFW --> GW
+
+    subgraph VPS["VPS devops-rikkei-chuong (Docker)"]
+        subgraph FE["network: frontend"]
+            GW[gateway<br/>Nginx :80]
+            OS[order-service<br/>Spring Boot :8080]
+        end
+        subgraph BE["network: backend"]
+            OS2[order-service]
+            DB[(order-db<br/>PostgreSQL :5432)]
+        end
+        GW -- "/api/orders, /health<br/>proxy_pass http://order-service:8080" --> OS
+        OS2 -- "JDBC jdbc:postgresql://order-db:5432" --> DB
+        DB --- V[(volume<br/>order_db_data)]
+    end
+    OS -.- OS2
+```
+
+**Một request `POST /api/orders` đi như sau:**
+
+1. Client gửi `POST http://221.121.2.29/api/orders`.
+2. Request đi qua **2 lớp tường lửa**: tường lửa Cloud của WiServices, rồi UFW trên VPS. Cả hai chỉ mở cổng `22` (SSH) và `80` (Gateway).
+3. Docker chuyển cổng 80 của VPS vào container **`gateway`** (Nginx). Gateway:
+   - áp **rate limit** 10 request/giây cho mỗi IP (vượt quá thì trả về `429`),
+   - gắn header **`X-Request-ID`** để truy vết request,
+   - dùng DNS nội bộ của Docker (`127.0.0.11`) phân giải tên `order-service`, rồi `proxy_pass` tới `order-service:8080`.
+4. **`order-service`** (Spring Boot) xử lý request, rồi dùng JPA/Hibernate ghi vào **`order-db`** qua `jdbc:postgresql://order-db:5432/quickbite_db`. Tên `order-db` cũng được DNS nội bộ phân giải (bài học từ Bài tập 5).
+5. PostgreSQL lưu dữ liệu vào volume `order_db_data`, nên dữ liệu không mất khi container bị tạo lại.
+6. Response đi ngược lại qua gateway về client: `201 Created` kèm JSON đơn hàng.
+
+**Các điểm thiết kế:**
+
+| Điểm | Cách làm |
+|---|---|
+| Chỉ 1 cổng public | Chỉ `gateway` publish `80:80`. `order-service` và `order-db` **không có `ports`**, nên Docker không mở cổng ra VPS. Vì vậy dù Docker bỏ qua UFW (Bài tập 4), backend và database vẫn không lộ ra ngoài |
+| Tách network | `frontend` (gateway ↔ backend) và `backend` (backend ↔ db). Gateway **không thể** kết nối tới database (đã kiểm chứng: không phân giải được `order-db`) |
+| Thứ tự khởi động | `order-db` healthy (`pg_isready`), rồi `order-service` healthy (`/actuator/health`), rồi mới khởi động `gateway` (`depends_on: condition: service_healthy`) |
+| Tự phục hồi | `restart: unless-stopped`: container tự chạy lại khi lỗi hoặc khi VPS khởi động lại |
+| Bí mật | Mật khẩu DB nằm trong `.env` trên VPS (`chmod 600`, sinh ngẫu nhiên, **không commit**), compose chỉ tham chiếu `${POSTGRES_PASSWORD}` |
+| Chặn endpoint nội bộ | Gateway chỉ cho qua `/api/orders` và `/health`, mọi đường dẫn khác (vd. `/actuator/env`) trả về `404` |
+| Lỗi backend | Gateway trả về JSON `503 {"error":"order-service unavailable"}` thay vì trang lỗi HTML |
+| Version image | Tag cố định `1.0.0` (đổi qua `GATEWAY_TAG` / `ORDER_SERVICE_TAG` trong `.env`) để UAT chạy đúng phiên bản đã kiểm thử |
+
+### 3. Đóng gói và push image lên Docker Hub (máy cá nhân)
+
+```powershell
+./gradlew bootJar
+docker build -t chuongdocker2004/quickbite-order-service:1.0.0 .
+docker build -t chuongdocker2004/quickbite-gateway:1.0.0 gateway
+docker push chuongdocker2004/quickbite-order-service:1.0.0
+docker push chuongdocker2004/quickbite-gateway:1.0.0
+```
+
+### 4. Triển khai trên VPS (pull image và chạy ngầm)
+
+VPS chỉ cần 2 file, **không cần source code**:
+
+```bash
+ssh deployer@221.121.2.29
+mkdir -p ~/quickbite-uat && cd ~/quickbite-uat
+# copy docker-compose.yml + .env.example vào thư mục này
+sed "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 16)/" .env.example > .env
+chmod 600 .env
+
+docker compose pull          # kéo image từ Docker Hub
+docker compose up -d         # chạy ngầm
+docker compose ps
+```
+
+```
+ Image postgres:15 Pulled
+ Image chuongdocker2004/quickbite-order-service:1.0.0 Pulled
+ Image chuongdocker2004/quickbite-gateway:1.0.0 Pulled
+ ...
+ Container quickbite-order-db Healthy
+ Container quickbite-order-service Healthy
+ Container quickbite-gateway Started
+
+NAME                      STATUS                PORTS
+quickbite-gateway         Up (healthy)          0.0.0.0:80->80/tcp
+quickbite-order-db        Up (healthy)          5432/tcp
+quickbite-order-service   Up (healthy)          8080/tcp
+```
+
+### 5. Kiểm tra firewall và gọi API
+
+**Firewall:** UFW `sudo ufw status` có `80/tcp ALLOW IN`, và tường lửa Cloud WiServices có rule `IN / ACCEPT / TCP / Đích cổng 80`.
+
+**Gọi API qua Gateway từ máy cá nhân (bên ngoài Internet):**
+
+```bash
+$ curl -s http://221.121.2.29/
+{"service":"quickbite-gateway","routes":["/api/orders","/health"]}
+
+$ curl -s http://221.121.2.29/health
+{"components":{"db":{"details":{"database":"PostgreSQL",...},"status":"UP"}, ...},"status":"UP"}
+
+$ curl -i -X POST http://221.121.2.29/api/orders -H "Content-Type: application/json" \
+    -d '{"customerName":"Chuong","item":"Bun cha","totalPrice":50000}'
+HTTP/1.1 201
+X-Request-ID: f8a43dff7ab1176c1f25c4749ec02061
+{"customerName":"Chuong","item":"Bun cha","totalPrice":50000,"createdAt":"2026-11-20T02:29:24.359962003Z","id":2}
+
+$ curl -s http://221.121.2.29/api/orders
+[{"customerName":"Chuong","item":"Com tam","totalPrice":45000.00,"createdAt":"2026-11-20T02:27:21.860812Z","id":1},
+ {"customerName":"Chuong","item":"Bun cha","totalPrice":50000.00,"createdAt":"2026-11-20T02:29:24.359962Z","id":2}]
+```
+
+**Rate limit:** gửi đồng thời 40 request `GET /api/orders` thì có **26 request `200`** (10 r/s + burst 20) và **14 request `429 Too Many Requests`**.
+
+**Kiểm tra bảo mật:**
+
+```bash
+$ curl -s -o /dev/null -w "%{http_code}\n" http://221.121.2.29/actuator/env
+404                                   # endpoint nội bộ bị gateway chặn
+
+$ curl -m 3 http://221.121.2.29:8080  # backend không publish cổng
+curl: (7) Failed to connect ... Could not connect to server
+
+$ Test-NetConnection 221.121.2.29 -Port 5432   # database không lộ ra ngoài
+TcpTestSucceeded : False
+
+$ docker exec quickbite-gateway nslookup order-db 127.0.0.11
+-> không phân giải được: gateway không thuộc network "backend"
+```
+
+**Tài nguyên** (VPS 1 GB RAM): gateway ~10 MiB, order-service ~272 MiB, order-db ~43 MiB.
